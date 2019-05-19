@@ -3,7 +3,7 @@ all: fcn
 fcn: io.o main.cu
 	nvcc main.cu io.o -o fcn
 
-io.o: io.c io.h
+io.o: io.c
 	gcc -c io.c
 
 clean:

@@ -18,39 +18,51 @@ random_weights(unsigned int n_weights) {
     return weights;
 }
 
+void
+train(float *images, char *labels, float *weights) {
+
+}
+
 /*
  * Read inputs, labels, and weights into GPU
  */
 int main(int argc, char **argv) {
 
-    float *images, *test_images, *weights;
     char *labels, *test_labels;
+    float *images, *test_images, *weights;
 
     labels = read_labels("mnist/train-labels-idx1-ubyte", 60'000);
-    images = read_images("mnist/train-images-idx3-ubyte", 60'000);
     test_labels = read_labels("mnist/t10k-labels-idx1-ubyte", 10'000);
+    images = read_images("mnist/train-images-idx3-ubyte", 60'000);
     test_images = read_images("mnist/t10k-images-idx3-ubyte", 10'000);
     weights = random_weights(28*28*1024*sizeof(float));
 
-    float *d_images, *d_labels, *d_weights;
-    cudaMalloc(&d_images, 60'000*28*28*sizeof(float));
-    cudaMalloc(&d_labels, 60'000*sizeof(unsigned int));
-    cudaMalloc(&d_weights, 28*28*1024*sizeof(unsigned int));
+    char *d_labels, *d_test_labels;
+    float *d_images, *d_test_images, *d_weights;
 
+    cudaMalloc(&d_labels, 60'000*sizeof(char));
+    cudaMalloc(&d_test_labels, 10'000*sizeof(char));
+    cudaMalloc(&d_images, 60'000*28*28*sizeof(float));
+    cudaMalloc(&d_test_images, 10'000*28*28*sizeof(float));
+    cudaMalloc(&d_weights, 28*28*1024*sizeof(float));
+
+    cudaMemcpy(d_labels, labels, 60'000*sizeof(char), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_test_labels, test_labels, 10'000*sizeof(char), cudaMemcpyHostToDevice);
     cudaMemcpy(d_images, images, 60'000*28*28*sizeof(float), cudaMemcpyHostToDevice);
-    cudaMemcpy(d_labels, labels, 60'000*sizeof(unsigned int), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_test_images, test_images, 10'000*28*28*sizeof(float), cudaMemcpyHostToDevice);
     cudaMemcpy(d_weights, weights, 28*28*1024*sizeof(float), cudaMemcpyHostToDevice);
 
-    for(unsigned int i_epoch = 0; i_epoch < 10; i_epoch++) {
-    }
+    train(images, labels, weights);
 
-    cudaFree(d_images);
     cudaFree(d_labels);
+    cudaFree(d_test_labels);
+    cudaFree(d_images);
+    cudaFree(d_test_images);
     cudaFree(d_weights);
 
     free(labels);
-    free(images);
     free(test_labels);
+    free(images);
     free(test_images);
     free(weights);
 }
