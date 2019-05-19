@@ -20,46 +20,41 @@ forward(float *input, unsigned int input_size, float *weights, float *output, un
     output[id] = (!relu || dp > 0)? dp : 0;
 }
 
-/*
-void
-softmax_layer(float *input, float *output) {
-    for(int class = 0; class < 10; class++) {
-        float max = 0;
-        for(int i = 0; i < 1024; i++) {
-            if(input[i] > max) max = input[i];
-        }
-        float sum = 0;
-        for(int i = 0; i < 1024; i++) {
-            output[i] = std::exp(in[i] - C);
-        }
+__global__ void
+softmax_forward(float *input, float *output, unsigned int n) {
+    unsigned int i;
+    float max = 0;
+    for(i = 0; i < n; i++) {
+        if(input[i] > max) max = input[i];
+    }
+    float sum = 0;
+    for(i = 0; i < n; i++) {
+        output[i] = exp(input[i] - max);
+        sum += output[i];
+    }
+    for(i = 0; i < n; i++) {
+        output[i] = output[i]/sum;
     }
 }
-
-    T sum = 0;
-    for (size_t i = 0; i < N; i++) {
-        out[i] = std::exp(in[i] - C);
-        sum += out[i];
-    }
-    std::transform(out.begin(), out.end(), out.begin(), [sum](auto e) { return e/sum; });
-
-    // Verify that it is a probability: Sums to 1 and all >= 0.
-    assert(approx_equal(std::accumulate(out.begin(), out.end(), T(0)), 1));
-    #ifndef NDEBUG
-    std::for_each(out.begin(), out.end(), [](auto e) { assert(e >= 0); });
-    #endif
-
-    return out;
-}
-*/
 
 void
 Network::train() {
     forward<<<1, 1024>>>(this->inputs, 28*28, this->weights1, this->outputs, 1024, true);
     gpu_assert(cudaPeekAtLastError());
     gpu_assert(cudaDeviceSynchronize());
-    forward<<<1, 10>>>(this->outputs, 1024, this->weights1, this->classes, 10, false);
+    forward<<<1, 10>>>(this->outputs, 1024, this->weights2, this->classes, 10, false);
     gpu_assert(cudaPeekAtLastError());
     gpu_assert(cudaDeviceSynchronize());
+    softmax_forward<<<1, 1>>>(this->classes, this->softmax, 10);
+    /*
+    float mem[10];
+    cudaMemcpy(mem, this->softmax, 10*sizeof(float), cudaMemcpyDeviceToHost);
+    float sum = 0;
+    for(unsigned int i = 0; i < 10; i++) {
+        sum += mem[i];
+    }
+    std::cout << sum << std::endl;
+    */
 }
 
 void
