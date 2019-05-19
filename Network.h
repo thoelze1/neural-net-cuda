@@ -6,7 +6,6 @@
 #define NETWORK_H
 
 #include <random>
-#include <iostream>
 
 #include "assert.h"
 
@@ -17,22 +16,26 @@ public:
     template <int N, int M>
     Network(float (&inputs)[N][M], unsigned char (&labels)[N]);
     ~Network();
+    void train();
+    void test();
+private:
+    /* fns */
+    template <int N>
+    void
+    random_weights(float (&weights)[N]);
+    /* vars */
     float *inputs;
     char *labels;
     float *weights1;
     float *weights2;
     float *scratch;
-private:
-    template <int N>
-    void
-    random_weights(float (&weights)[N]);
 };
 
 template <int N, int M>
 Network::Network(float (&inputs)[N][M], unsigned char (&labels)[N]) {
 
-    float weights1[M*N_NODES];// = new float[M*N_NODES];
-    float weights2[N_NODES*10];// = new float[N_NODES*10];
+    float weights1[M*N_NODES];
+    float weights2[N_NODES*10];
 
     random_weights(weights1);
     random_weights(weights2);
@@ -47,8 +50,6 @@ Network::Network(float (&inputs)[N][M], unsigned char (&labels)[N]) {
     cudaMemcpy(this->inputs, inputs, 60000*28*28*sizeof(float), cudaMemcpyHostToDevice);
     cudaMemcpy(this->weights1, weights1, 28*28*1024*sizeof(float), cudaMemcpyHostToDevice);
     cudaMemcpy(this->weights2, weights2, 1024*10*sizeof(float), cudaMemcpyHostToDevice);
-
-    std::cout << "Hi" << std::endl;
 }
 
 template <int N>
