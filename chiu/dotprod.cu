@@ -5,8 +5,8 @@
 #include <chrono>
 #include <assert.h>
 
-constexpr size_t N_INPUTS = 128*1024;
-constexpr size_t N_NODES = 8192;
+constexpr size_t N_INPUTS = 1024;
+constexpr size_t N_NODES = 1024;
 static_assert(N_NODES%1024 == 0, "N_NODES must be multiple of 1024");
 
 #define gpu_assert(rv) gpu_assert_h((rv), __FILE__, __LINE__)
@@ -104,7 +104,7 @@ main() {
         fprintf(devnull, "Node %zu DP: %f\n", i, dot_prods.at(i));
     }
 
-    printf("Time required on CPU: %f\n", dt.count()/1'000.0);
+    printf("Time required on CPU: %f\n", dt.count()/1000.0);
 
     /*
      * Now do device.
@@ -167,7 +167,7 @@ main() {
         }
         */
 
-        printf("Time required on GPU: %f\n", dt.count()/1'000.0);
+        printf("Time required on GPU: %f\n", dt.count()/1000.0);
     }
 }
 

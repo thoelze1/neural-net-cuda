@@ -1,16 +1,10 @@
-all: sequential parallel vecadd dotprod
-
-sequential:
-	g++ sequential.cpp -o sequential
-
-parallel:
-	nvcc parallel.cu -o parallel
+all: vecadd dotprod
 
 vecadd:
-	nvcc vecadd.cu -o vecadd
+	nvcc -std=c++11 vecadd.cu -o vecadd
 
 dotprod:
-	nvcc dotprod.cu -o dotprod
+	nvcc -std=c++11 dotprod.cu -o dotprod
 
 clean:
-	rm -f sequential parallel vecadd dotprod
+	rm -f vecadd dotprod
