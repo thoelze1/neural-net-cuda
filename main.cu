@@ -7,6 +7,15 @@
 extern "C" float * read_images(char *, unsigned int);
 extern "C" char * read_labels(char *, unsigned int);
 
+#define gpu_assert(rv) gpu_assert_h((rv), __FILE__, __LINE__)
+void
+gpu_assert_h(cudaError_t code, const char *file, int line, bool abort=true) {
+    if (code != cudaSuccess) {
+        fprintf(stderr,"GPUassert: %s %s %d\n", cudaGetErrorString(code), file, line);
+        if (abort) exit(code);
+    }
+}
+
 float *
 random_weights(unsigned int n_weights) {
     float *weights = (float *)malloc(n_weights*sizeof(float));
@@ -18,9 +27,36 @@ random_weights(unsigned int n_weights) {
     return weights;
 }
 
+__global__ void
+hidden_layer(float *input, float *weights, float *output) {
+
+    int id = blockIdx.x*blockDim.x + threadIdx.x;
+
+    weights = weights + id*28*28;
+
+    float dp = 0;
+    for (unsigned int i = 0; i < 28*28; i++) {
+        dp += weights[i]*input[i];
+    }
+    output[id] = dp;
+}
+
 void
 train(float *images, char *labels, float *weights) {
 
+}
+
+void
+test(float *images, char *labels, float *weights) {
+
+    float *hidden;
+    cudaMalloc(&hidden, 1024*sizeof(float));
+
+    hidden_layer<<<1, 1024>>>(images, weights, hidden);
+    gpu_assert(cudaPeekAtLastError());
+    gpu_assert(cudaDeviceSynchronize());
+
+    cudaFree(hidden);
 }
 
 /*
@@ -52,7 +88,10 @@ int main(int argc, char **argv) {
     cudaMemcpy(d_test_images, test_images, 10'000*28*28*sizeof(float), cudaMemcpyHostToDevice);
     cudaMemcpy(d_weights, weights, 28*28*1024*sizeof(float), cudaMemcpyHostToDevice);
 
-    train(images, labels, weights);
+    for(int e = 0; e < 1; e++) {
+        train(d_images, d_labels, d_weights);
+        test(d_test_images, d_test_labels, d_weights);
+    }
 
     cudaFree(d_labels);
     cudaFree(d_test_labels);
