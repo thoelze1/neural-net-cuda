@@ -1,10 +1,7 @@
 all: fcn
 
-fcn: io.o main.cu
-	nvcc main.cu io.o -o fcn
-
-io.o: io.c
-	gcc -c io.c
+fcn: main.cu
+	nvcc -std=c++11 main.cu -o fcn
 
 clean:
-	rm -f fcn *.o
+	rm -f fcn
