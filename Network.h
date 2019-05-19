@@ -6,6 +6,7 @@
 #define NETWORK_H
 
 #include <random>
+#include <iostream>
 
 #include "assert.h"
 
@@ -24,11 +25,13 @@ private:
     void
     random_weights(float (&weights)[N]);
     /* vars */
-    float *inputs;
     char *labels;
+    float *inputs;
     float *weights1;
+    float *outputs;
     float *weights2;
-    float *scratch;
+    float *classes;
+    float *softmax;
 };
 
 template <int N, int M>
@@ -40,11 +43,13 @@ Network::Network(float (&inputs)[N][M], unsigned char (&labels)[N]) {
     random_weights(weights1);
     random_weights(weights2);
 
-    cudaMalloc(&this->inputs, N*M*sizeof(float));
     cudaMalloc(&this->labels, N*sizeof(char));
+    cudaMalloc(&this->inputs, N*M*sizeof(float));
     cudaMalloc(&this->weights1, M*N_NODES*sizeof(float));
+    cudaMalloc(&this->outputs, N_NODES*sizeof(float));
     cudaMalloc(&this->weights2, N_NODES*10*sizeof(float));
-    cudaMalloc(&this->scratch, N_NODES*sizeof(float));
+    cudaMalloc(&this->classes, 10*sizeof(float));
+    cudaMalloc(&this->softmax, 10*sizeof(float));
 
     cudaMemcpy(this->labels, labels, 60000*sizeof(char), cudaMemcpyHostToDevice);
     cudaMemcpy(this->inputs, inputs, 60000*28*28*sizeof(float), cudaMemcpyHostToDevice);

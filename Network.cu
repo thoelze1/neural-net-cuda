@@ -8,39 +8,16 @@
 #include "Network.h"
 
 __global__ void
-hidden_layer(float *input, float *weights, float *output) {
+forward(float *input, unsigned int input_size, float *weights, float *output, unsigned int output_size, bool relu) {
 
     int id = blockIdx.x*blockDim.x + threadIdx.x;
-
-    weights = weights + id*28*28;
+    weights = weights + id*input_size;
 
     float dp = 0;
-    for (unsigned int i = 0; i < 28*28; i++) {
+    for (unsigned int i = 0; i < input_size; i++) {
         dp += weights[i]*input[i];
     }
-    output[id] = dp > 0? dp : 0; //ReLU
-}
-
-void
-Network::train() {
-    /*
-    hidden_layer<<<1, 1024>>>(images, weights, hidden);
-    gpu_assert(cudaPeekAtLastError());
-    gpu_assert(cudaDeviceSynchronize());
-    */
-}
-
-void
-Network::test() {
-
-}
-
-Network::~Network() {
-    cudaFree(this->inputs);
-    cudaFree(this->labels);
-    cudaFree(this->weights1);
-    cudaFree(this->weights2);
-    cudaFree(this->scratch);
+    output[id] = (!relu || dp > 0)? dp : 0;
 }
 
 /*
@@ -74,3 +51,28 @@ softmax_layer(float *input, float *output) {
     return out;
 }
 */
+
+void
+Network::train() {
+    forward<<<1, 1024>>>(this->inputs, 28*28, this->weights1, this->outputs, 1024, true);
+    gpu_assert(cudaPeekAtLastError());
+    gpu_assert(cudaDeviceSynchronize());
+    forward<<<1, 10>>>(this->outputs, 1024, this->weights1, this->classes, 10, false);
+    gpu_assert(cudaPeekAtLastError());
+    gpu_assert(cudaDeviceSynchronize());
+}
+
+void
+Network::test() {
+
+}
+
+Network::~Network() {
+    cudaFree(this->labels);
+    cudaFree(this->inputs);
+    cudaFree(this->weights1);
+    cudaFree(this->outputs);
+    cudaFree(this->weights2);
+    cudaFree(this->classes);
+    cudaFree(this->softmax);
+}
