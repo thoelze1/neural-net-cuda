@@ -1165,7 +1165,6 @@ template <typename IN_DIMS, size_t N_NEURONS>
 void
 FullyConnectedLayer<IN_DIMS, N_NEURONS>::forward(const Input &input, const Array<Input, N_NEURONS> &weight, const Array<double, N_NEURONS> &bias,
  const Array<double, N_NEURONS> &dropped, Output &output) {
-    // Connect each neuron to everything.
     for (size_t i = 0; i < N_NEURONS; i++) {
         double &out(output[0][0][i]);
         out = 0;
@@ -1180,16 +1179,7 @@ FullyConnectedLayer<IN_DIMS, N_NEURONS>::forward(const Input &input, const Array
         if (m_relu) {
             out = std::max(0.0, out);
         }
-        // Value is 0 if dropped, or 1/dropout-rate if not dropped, so as to maintain constant overall
-        // expected value.
         assert(dropped(i) == 0 || dropped(i) >= 1);
-        /*
-        if (dropped(i) == 0) {
-            fprintf(stderr, "%d dropped\n", int(i));
-        } else if (dropped(i) > 1) {
-            fprintf(stderr, "%d expanded by %f\n", int(i), dropped(i));
-        }
-        */
         out *= dropped(i);
     }
 }
@@ -1339,54 +1329,6 @@ read_int(int fd) {
     return i;
 }
 
-void
-output_pgm(const std::string &fn, const float (&img)[28][28]) {
-
-    std::ofstream ofs(fn, std::fstream::out|std::fstream::trunc);
-
-    ofs << "P2\n";
-    ofs << "28 28\n";
-    ofs << "255\n";
-    for (int i = 0; i < 28; i++) {
-        for (int j = 0; j < 28; j++) {
-            if (j > 0) {
-                ofs << " ";
-            }
-            ofs << 255 - int(std::round(127.5*(img[i][j] + 1)));
-        }
-        ofs << "\n";
-    }
-}
-
-void
-output_pgm(const std::string &fn, const Array<double, 1, 5, 5> &img) {
-
-    std::ofstream ofs(fn, std::fstream::out|std::fstream::trunc);
-
-    double min = std::numeric_limits<double>::max();
-    double max = std::numeric_limits<double>::min();
-    for (int i = 0; i < 5; i++) {
-        for (int j = 0; j < 5; j++) {
-            min = std::min(min, img(0, i, j));
-            max = std::max(max, img(0, i, j));
-        }
-    }
-    const double range = max - min;
-
-    ofs << "P2\n";
-    ofs << "5 5\n";
-    ofs << "255\n";
-    for (int i = 0; i < 5; i++) {
-        for (int j = 0; j < 5; j++) {
-            if (j > 0) {
-                ofs << " ";
-            }
-            ofs << int(std::round((img(0, i, j) - min)*(255/range)));
-        }
-        ofs << "\n";
-    }
-}
-
 template <int N>
 void
 read_mnist_images(const std::string &fn, float (&imgs)[N][28][28]) {
@@ -1447,124 +1389,12 @@ read_mnist_labels(const std::string &fn, unsigned char (&labels)[N]) {
     rv = close(fd); assert(rv == 0);
 }
 
-void
-run3() {
-
-    /*
-     * Read in training data.
-     */
-
-    static float training_images[60'000][28][28];
-    read_mnist_images("mnist/train-images-idx3-ubyte", training_images);
-    output_pgm("img0.pgm", training_images[0]);
-    output_pgm("img59999.pgm", training_images[59999]);
-
-    static unsigned char training_labels[60'000];
-    read_mnist_labels("mnist/train-labels-idx1-ubyte", training_labels);
-    assert(training_labels[0] == 5);
-    assert(training_labels[59'999] == 8);
-
-    static float test_images[10'000][28][28];
-    read_mnist_images("mnist/t10k-images-idx3-ubyte", test_images);
-    static unsigned char test_labels[10'000];
-    read_mnist_labels("mnist/t10k-labels-idx1-ubyte", test_labels);
-
-    {
-        static InputLayer<Dims<1, 28, 28>> il;
-        static ConvolutionalLayer<Dims<1, 28, 28>, 32> cl1("cl1", 1);
-        static MaxPoolLayer<Dims<32, 28, 28>> pl1("pl1");
-        static ConvolutionalLayer<Dims<32, 14, 14>, 32> cl2("cl2", 2);
-        static MaxPoolLayer<Dims<32, 14, 14>> pl2("pl2");
-        /*
-        static FullyConnectedLayer<Dims<64, 7, 7>, 1024> dl1("dl1", 0.4, 1);
-        static FullyConnectedLayer<Dims<1, 1, 1024>, 10> dl2("dl2", 0, 2);
-        */
-        static FullyConnectedLayer<Dims<32, 7, 7>, 64> dl1("dl1", true, 0.4, 1);
-        static FullyConnectedLayer<Dims<1, 1, 64>, 10> dl2("dl2", false, 0, 2);
-        static SoftmaxLayer<10> sm;
-        static CrossEntropyLayer<10> ce;
-
-        il.next_layer = &cl1; cl1.previous_layer = &il;
-        cl1.next_layer = &pl1; pl1.previous_layer = &cl1;
-        pl1.next_layer = &cl2; cl2.previous_layer = &pl1;
-        cl2.next_layer = &pl2; pl2.previous_layer = &cl2;
-        pl2.next_layer = &dl1; dl1.previous_layer = &pl2;
-        dl1.next_layer = &dl2; dl2.previous_layer = &dl1;
-        dl2.next_layer = &sm; sm.previous_layer = &dl2;
-        sm.next_layer = &ce; ce.previous_layer = &sm;
-
-        std::mt19937 g(9815);
-        std::uniform_int_distribution<size_t> pick_test(0, 9'999);
-
-        for (int e = 0; e < 100; e++) {
-
-            // Create shuffled sequence of training images.
-            std::vector<int> training(60'000);
-            std::iota(training.begin(), training.end(), 0);
-            assert(*--training.end() == 59'999);
-            std::shuffle(training.begin(), training.end(), g);
-
-            /*
-            // Create shuffled sequence of test images.
-            std::vector<int> test(10'000);
-            std::iota(test.begin(), test.end(), 0);
-            assert(*--test.end() == 9'999);
-            {
-                std::mt19937 g(9175);
-                std::shuffle(test.begin(), test.end(), g);
-            }
-            */
-
-            // size_t training_index = 0;
-
-            for (int r = 0; r < 600; r++) {
-
-                if (r%50 == 0) {
-
-                    // fprintf(stderr, "Begin predict...."); fflush(stderr);
-                    int correct = 0;
-                    for (size_t i = 0; i < 100; i++) {
-                        // fprintf(stderr, "Predict: %d for %lu\n", input.predict(training_images[i]), i);
-                        size_t ind = pick_test(g);
-                        if (il.predict(test_images[ind]) == test_labels[ind]) {
-                            correct++;
-                        }
-                    }
-                    fprintf(stderr, "Epoch %d: Round %d: accuracy=%f\n", e, r, correct/100.0);
-
-                    for (size_t i = 0; i < 32; i++) {
-                        char buf[100];
-                        sprintf(buf, "e%03d-r%03d-%02zu.pgm", e, r, i);
-                        output_pgm(buf, cl1.m_filter[i]);
-                    }
-                    // std::cerr << cl1.m_filter;
-                }
-
-                /*
-                std::cerr << "Weights:" << std::endl;
-                for (size_t n = 0; n < 10; n++) {
-                    std::cerr << "Neuron " << n << ":" << std::endl;
-                    print(std::cout, dl.weight[n]);
-                }
-                */
-
-                for (size_t i = 0; i < 100; i++) {
-                    il.train(training_images[training.at(100*r + i)], training_labels[training.at(100*r + i)], 100);
-                }
-                il.update_weights(.01);
-            }
-        }
-    }
-}
-
 // Two FC layers, with 1024 neurons in first.
 void
 run4() {
 
     static float training_images[60'000][28][28];
     read_mnist_images("mnist/train-images-idx3-ubyte", training_images);
-    output_pgm("img0.pgm", training_images[0]);
-    output_pgm("img59999.pgm", training_images[59999]);
 
     static unsigned char training_labels[60'000];
     read_mnist_labels("mnist/train-labels-idx1-ubyte", training_labels);
@@ -1660,47 +1490,7 @@ run4() {
     #endif
 }
 
-void run2();
-
 int
 main() {
-
-    /*
-     * Test Array.
-     */
-    {
-        Array<double, 3> a;
-        a[0] = 1.1;
-        a[1] = 2.2;
-        a[2] = 3.3;
-        Array<double, 3> a2(a);
-        assert(a2[0] == 1.1);
-        assert(a2[1] == 2.2);
-        assert(a2[2] == 3.3);
-        Array<double, 3> a3;
-        a3 = a2;
-        assert(a3[0] == 1.1);
-        assert(a3[1] == 2.2);
-        assert(a3[2] == 3.3);
-        // a3[3] = 1; // Should assert().
-        Array<double, 2, 2> a4;
-        a4(0, 0) = 0;
-        a4(0, 1) = 1;
-        a4(1, 0) = 2;
-        a4(1, 1) = 3;
-        assert(a4[0][0] == 0);
-        assert(a4[0][1] == 1);
-        assert(a4[1][0] == 2);
-        assert(a4[1][1] == 3);
-        Array<float, 2, 3> a5;
-        a5 = 1.1f;
-        assert(a5(0, 0) == 1.1f);
-        assert(a5(0, 1) == 1.1f);
-        assert(a5(0, 2) == 1.1f);
-        assert(a5(1, 0) == 1.1f);
-        assert(a5(1, 1) == 1.1f);
-        assert(a5(1, 2) == 1.1f);
-    }
-
     run4();
 }
