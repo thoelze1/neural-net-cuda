@@ -30,6 +30,9 @@ private:
     float *classes;
     float *softmax;
     float *softmax_ds;
+    float *hidden_ds;
+    float *weights1_grad;
+    float *weights2_grad;
     thrust::device_vector<float> temp;
 };
 
