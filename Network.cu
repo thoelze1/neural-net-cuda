@@ -28,24 +28,21 @@ Network::Network(float *inputs, unsigned char *labels) {
         weights2[i] = dist(*(this->eng));
     }
 
-    cudaMalloc(&this->labels, 60000*sizeof(char));
+    this->host_labels = labels;
     cudaMalloc(&this->inputs, 28*28*60000*sizeof(float));
     cudaMalloc(&this->weights1, 28*28*N_NODES*sizeof(float));
     cudaMalloc(&this->outputs, N_NODES*sizeof(float));
     cudaMalloc(&this->weights2, N_NODES*10*sizeof(float));
     cudaMalloc(&this->classes, 10*sizeof(float));
     cudaMalloc(&this->softmax, 10*sizeof(float));
-    cudaMalloc(&this->truth, 10*sizeof(float));
-    cudaMalloc(&this->loss, sizeof(float));
+    cudaMalloc(&this->softmax_ds, 10*sizeof(float));
 
-    cudaMemcpy(this->labels, labels, 60000*sizeof(char), cudaMemcpyHostToDevice);
     cudaMemcpy(this->inputs, inputs, 60000*28*28*sizeof(float), cudaMemcpyHostToDevice);
     cudaMemcpy(this->weights1, weights1, 28*28*1024*sizeof(float), cudaMemcpyHostToDevice);
     cudaMemcpy(this->weights2, weights2, 1024*10*sizeof(float), cudaMemcpyHostToDevice);
 }
 
 Network::~Network() {
-    cudaFree(this->labels);
     cudaFree(this->inputs);
     cudaFree(this->weights1);
     cudaFree(this->outputs);
@@ -86,16 +83,26 @@ softmax_forward(float *input, float *output, unsigned int n) {
 }
 
 __global__ void
-ce_forward(float *real, char *label, float *loss) {
-    /* UNFINISHED
-    float ce = 0;
-    float prob = 0;
-    for (unsigned int i = 0; i < 10; i++) {
-        if(*label == i) prob = 1;
-        else prob = 0;
-        ce += prob*std::log(real[i]);
+softmax_back(float *sm_out, unsigned char label, float *sm_ds) {
+
+    unsigned int id = blockIdx.x*blockDim.x + threadIdx.x;
+
+    float us = -1/sm_out[label];
+    if (id == (unsigned int)label) {
+        sm_ds[id] = (sm_out[label]*(1 - sm_out[id]))*us;
+    } else {
+        sm_ds[id] = (-1*sm_out[id]*sm_out[label])*us;
     }
-    *loss = -ce;
+    /*
+    for (size_t i = 0; i < N; i++) {
+        for (size_t j = 0; j < N; j++) {
+            if (i == j) {
+                sm_ds[j] += (out[i]*(1 - out[j]))*us[i];
+            } else {
+                sm_ds[j] += (-out[j]*out[i])*us[i];
+            }
+        }
+    }
     */
 }
 
@@ -114,7 +121,7 @@ Network::run(unsigned int i) {
     gpu_assert(cudaPeekAtLastError());
     gpu_assert(cudaDeviceSynchronize());
 
-    ce_forward<<<1, 1>>>(this->softmax, this->labels+i, this->loss);
+    softmax_back<<<1, 10>>>(this->softmax, this->host_labels[i], this->softmax_ds);
     gpu_assert(cudaPeekAtLastError());
     gpu_assert(cudaDeviceSynchronize());
 }
@@ -131,12 +138,15 @@ Network::train() {
         indices[i] = i;
     }
     std::shuffle(std::begin(indices), std::end(indices), *(this->eng));
+    /*
     for(unsigned int i = 0; i < (60000/BATCH_SIZE); i++) {
         for(unsigned int j = 0; j < BATCH_SIZE; j++) {
             run(indices[i*BATCH_SIZE+j]);
         }
         update();
     }
+    */
+    run(0);
 }
 
 float

@@ -22,15 +22,14 @@ private:
     void run(unsigned int i);
     /* vars */
     std::default_random_engine *eng;
-    char *labels;
+    unsigned char *host_labels;
     float *inputs;
     float *weights1;
     float *outputs;
     float *weights2;
     float *classes;
     float *softmax;
-    float *loss;
-    float *truth;
+    float *softmax_ds;
     thrust::device_vector<float> temp;
 };
 
