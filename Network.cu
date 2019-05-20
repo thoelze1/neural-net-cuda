@@ -11,6 +11,7 @@
 
 #define N_NODES       1024
 #define BATCH_SIZE     100
+#define RATE          0.01
 
 Network::Network(float *inputs, unsigned char *labels) {
 
@@ -34,6 +35,8 @@ Network::Network(float *inputs, unsigned char *labels) {
     cudaMalloc(&this->weights2, N_NODES*10*sizeof(float));
     cudaMalloc(&this->classes, 10*sizeof(float));
     cudaMalloc(&this->softmax, 10*sizeof(float));
+    cudaMalloc(&this->truth, 10*sizeof(float));
+    cudaMalloc(&this->loss, sizeof(float));
 
     cudaMemcpy(this->labels, labels, 60000*sizeof(char), cudaMemcpyHostToDevice);
     cudaMemcpy(this->inputs, inputs, 60000*28*28*sizeof(float), cudaMemcpyHostToDevice);
@@ -82,24 +85,43 @@ softmax_forward(float *input, float *output, unsigned int n) {
     }
 }
 
+__global__ void
+ce_forward(float *real, char *label, float *loss) {
+    /* UNFINISHED
+    float ce = 0;
+    float prob = 0;
+    for (unsigned int i = 0; i < 10; i++) {
+        if(*label == i) prob = 1;
+        else prob = 0;
+        ce += prob*std::log(real[i]);
+    }
+    *loss = -ce;
+    */
+}
+
 void
-Network::run(unsigned int index) {
-    forward<<<1, 1024>>>(this->inputs, 28*28, this->weights1, this->outputs, 1024, true);
+Network::run(unsigned int i) {
+
+    forward<<<1, 1024>>>(this->inputs+i*28*28, 28*28, this->weights1, this->outputs, 1024, true);
     gpu_assert(cudaPeekAtLastError());
     gpu_assert(cudaDeviceSynchronize());
+
     forward<<<1, 10>>>(this->outputs, 1024, this->weights2, this->classes, 10, false);
     gpu_assert(cudaPeekAtLastError());
     gpu_assert(cudaDeviceSynchronize());
+
     softmax_forward<<<1, 1>>>(this->classes, this->softmax, 10);
-    /*
-    float mem[10];
-    cudaMemcpy(mem, this->softmax, 10*sizeof(float), cudaMemcpyDeviceToHost);
-    float sum = 0;
-    for(unsigned int i = 0; i < 10; i++) {
-        sum += mem[i];
-    }
-    std::cout << sum << std::endl;
-    */
+    gpu_assert(cudaPeekAtLastError());
+    gpu_assert(cudaDeviceSynchronize());
+
+    ce_forward<<<1, 1>>>(this->softmax, this->labels+i, this->loss);
+    gpu_assert(cudaPeekAtLastError());
+    gpu_assert(cudaDeviceSynchronize());
+}
+
+void
+Network::update() {
+
 }
 
 void
@@ -111,8 +133,9 @@ Network::train() {
     std::shuffle(std::begin(indices), std::end(indices), *(this->eng));
     for(unsigned int i = 0; i < (60000/BATCH_SIZE); i++) {
         for(unsigned int j = 0; j < BATCH_SIZE; j++) {
-            //run(indices[i*BATCH_SIZE+j]);
+            run(indices[i*BATCH_SIZE+j]);
         }
+        update();
     }
 }
 

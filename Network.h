@@ -18,6 +18,7 @@ public:
     float test(float *tests, unsigned char *labels);
 private:
     /* fns */
+    void update();
     void run(unsigned int i);
     /* vars */
     std::default_random_engine *eng;
@@ -28,6 +29,8 @@ private:
     float *weights2;
     float *classes;
     float *softmax;
+    float *loss;
+    float *truth;
     thrust::device_vector<float> temp;
 };
 
