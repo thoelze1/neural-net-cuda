@@ -23,17 +23,16 @@ private:
     /* vars */
     std::default_random_engine *eng;
     unsigned char *host_labels;
-    float *inputs;
-    float *weights1;
-    float *outputs;
-    float *weights2;
-    float *classes;
-    float *softmax;
+    float *input_l;
+    float *input_w;
+    float *hidden_l;
+    float *hidden_w;
+    float *output_l;
+    float *softmax_l;
     float *softmax_ds;
     float *hidden_ds;
-    float *weights1_grad;
-    float *weights2_grad;
-    thrust::device_vector<float> temp;
+    float *input_w_grad;
+    float *hidden_w_grad;
 };
 
 #endif

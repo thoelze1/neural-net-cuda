@@ -11,47 +11,47 @@
 
 #define N_NODES       1024
 #define BATCH_SIZE     100
-#define RATE          0.01
+#define RATE         0.002
 
 Network::Network(float *inputs, unsigned char *labels) {
 
-    float weights1[28*28*N_NODES];
-    float weights2[N_NODES*10];
+    float input_w[28*28*N_NODES];
+    float hidden_w[N_NODES*10];
 
     this->eng = new std::default_random_engine(std::random_device{}());
 
     std::uniform_real_distribution<float> dist(-1.0, 1.0);
     for(unsigned int i = 0; i < 28*28*N_NODES; i++) {
-        weights1[i] = dist(*(this->eng));
+        input_w[i] = dist(*(this->eng));
     }
     for(unsigned int i = 0; i < N_NODES*10; i++) {
-        weights2[i] = dist(*(this->eng));
+        hidden_w[i] = dist(*(this->eng));
     }
 
     this->host_labels = labels;
-    cudaMalloc(&this->inputs, 28*28*60000*sizeof(float));
-    cudaMalloc(&this->weights1, 28*28*N_NODES*sizeof(float));
-    cudaMalloc(&this->outputs, N_NODES*sizeof(float));
-    cudaMalloc(&this->weights2, N_NODES*10*sizeof(float));
-    cudaMalloc(&this->classes, 10*sizeof(float));
-    cudaMalloc(&this->softmax, 10*sizeof(float));
+    cudaMalloc(&this->input_l, 28*28*60000*sizeof(float));
+    cudaMalloc(&this->input_w, 28*28*N_NODES*sizeof(float));
+    cudaMalloc(&this->hidden_l, N_NODES*sizeof(float));
+    cudaMalloc(&this->hidden_w, N_NODES*10*sizeof(float));
+    cudaMalloc(&this->output_l, 10*sizeof(float));
+    cudaMalloc(&this->softmax_l, 10*sizeof(float));
     cudaMalloc(&this->softmax_ds, 10*sizeof(float));
     cudaMalloc(&this->hidden_ds, 1024*sizeof(float));
-    cudaMalloc(&this->weights1_grad, 28*28*1024*sizeof(float));
-    cudaMalloc(&this->weights2_grad, 1024*10*sizeof(float));
+    cudaMalloc(&this->input_w_grad, 28*28*1024*sizeof(float));
+    cudaMalloc(&this->hidden_w_grad, 1024*10*sizeof(float));
 
-    cudaMemcpy(this->inputs, inputs, 60000*28*28*sizeof(float), cudaMemcpyHostToDevice);
-    cudaMemcpy(this->weights1, weights1, 28*28*1024*sizeof(float), cudaMemcpyHostToDevice);
-    cudaMemcpy(this->weights2, weights2, 1024*10*sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemcpy(this->input_l, inputs, 60000*28*28*sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemcpy(this->input_w, input_w, 28*28*1024*sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemcpy(this->hidden_w, hidden_w, 1024*10*sizeof(float), cudaMemcpyHostToDevice);
 }
 
 Network::~Network() {
-    cudaFree(this->inputs);
-    cudaFree(this->weights1);
-    cudaFree(this->outputs);
-    cudaFree(this->weights2);
-    cudaFree(this->classes);
-    cudaFree(this->softmax);
+    cudaFree(this->input_l);
+    cudaFree(this->input_w);
+    cudaFree(this->hidden_l);
+    cudaFree(this->hidden_w);
+    cudaFree(this->output_l);
+    cudaFree(this->softmax_l);
     delete this->eng;
 }
 
@@ -100,36 +100,46 @@ hidden_forward(float *input, unsigned int input_size, float *weights, float *out
 
 //TODO use multiple blocks to make this faster
 __global__ void
-hidden_back(float *hidden_out, float *sm_ds, float *hidden_ds, float *weights2, float *weights2_grad, float *layer) {
+hidden_back(float *input, unsigned int input_size, float *output, unsigned int output_size,
+            float *us, float *ds, float *weights, float *weights_grad, bool relu) {
 
     unsigned int id = blockIdx.x*blockDim.x + threadIdx.x;
 
-    for(unsigned int i = 0; i < 10; i++) {
-        hidden_ds[id] += sm_ds[i]*weights2[id*10+i];
-        weights2_grad[id*10+i] += sm_ds[i]*layer[id];
+    for(unsigned int i = 0; i < output_size; i++) {
+        if(!relu || (relu && output[i] > 0)) {
+            if(ds) ds[id] += us[i]*weights[id*output_size+i];
+            weights_grad[id*output_size+i] += (us[i]*input[id]/BATCH_SIZE);
+        }
     }
 }
 
 void
 Network::run(unsigned int i) {
 
-    hidden_forward<<<1, 1024>>>(this->inputs+i*28*28, 28*28, this->weights1, this->outputs, 1024, true);
+    hidden_forward<<<1, 1024>>>(this->input_l+i*28*28, 28*28, this->input_w, this->hidden_l, 1024, true);
     gpu_assert(cudaPeekAtLastError());
     gpu_assert(cudaDeviceSynchronize());
 
-    hidden_forward<<<1, 10>>>(this->outputs, 1024, this->weights2, this->classes, 10, false);
+    hidden_forward<<<1, 10>>>(this->hidden_l, 1024, this->hidden_w, this->output_l, 10, false);
     gpu_assert(cudaPeekAtLastError());
     gpu_assert(cudaDeviceSynchronize());
 
-    softmax_forward<<<1, 1>>>(this->classes, this->softmax, 10);
+    softmax_forward<<<1, 1>>>(this->output_l, this->softmax_l, 10);
     gpu_assert(cudaPeekAtLastError());
     gpu_assert(cudaDeviceSynchronize());
 
-    softmax_back<<<1, 10>>>(this->softmax, this->host_labels[i], this->softmax_ds);
+    softmax_back<<<1, 10>>>(this->softmax_l, this->host_labels[i], this->softmax_ds);
     gpu_assert(cudaPeekAtLastError());
     gpu_assert(cudaDeviceSynchronize());
 
-    hidden_back<<<1, 1024>>>(this->classes, this->softmax_ds, this->hidden_ds, this->weights2, this->weights2_grad, this->outputs);
+    cudaMemset(this->hidden_ds, 0, 1024*sizeof(float));
+    hidden_back<<<1, 1024>>>(this->hidden_l, 1024, this->output_l, 10,
+                             this->softmax_ds, this->hidden_ds, this->hidden_w, this->hidden_w_grad, false);
+    gpu_assert(cudaPeekAtLastError());
+    gpu_assert(cudaDeviceSynchronize());
+
+    hidden_back<<<1, 28*28>>>(this->input_l, 28*28, this->hidden_l, 1024,
+                              this->hidden_ds, 0, this->input_w, this->input_w_grad, true);
     gpu_assert(cudaPeekAtLastError());
     gpu_assert(cudaDeviceSynchronize());
 }
@@ -148,8 +158,8 @@ Network::train() {
     std::shuffle(std::begin(indices), std::end(indices), *(this->eng));
     /*
     for(unsigned int i = 0; i < (60000/BATCH_SIZE); i++) {
-        cudaMemset(this->weights1_grad, 0, 28*28*1024*sizeof(float))
-        cudaMemset(this->weights2_grad, 0, 28*28*1024*sizeof(float))
+        cudaMemset(this->input_w_grad, 0, 28*28*1024*sizeof(float))
+        cudaMemset(this->hidden_w_grad, 0, 28*28*1024*sizeof(float))
         for(unsigned int j = 0; j < BATCH_SIZE; j++) {
             run(indices[i*BATCH_SIZE+j]);
         }
@@ -169,14 +179,14 @@ Network::test(float *tests, unsigned char *labels) {
     unsigned int acc = 0;
     //@TODO change back to 10000
     for(unsigned int i = 0; i < 1000; i++) {
-        hidden_forward<<<1, 1024>>>(d_tests + i*28*28, 28*28, this->weights1, this->outputs, 1024, true);
+        hidden_forward<<<1, 1024>>>(d_tests + i*28*28, 28*28, this->input_w, this->hidden_l, 1024, true);
         gpu_assert(cudaPeekAtLastError());
         gpu_assert(cudaDeviceSynchronize());
-        hidden_forward<<<1, 10>>>(this->outputs, 1024, this->weights2, this->classes, 10, false);
+        hidden_forward<<<1, 10>>>(this->hidden_l, 1024, this->hidden_w, this->output_l, 10, false);
         gpu_assert(cudaPeekAtLastError());
         gpu_assert(cudaDeviceSynchronize());
         float mem[10];
-        cudaMemcpy(mem, this->classes, 10*sizeof(float), cudaMemcpyDeviceToHost);
+        cudaMemcpy(mem, this->output_l, 10*sizeof(float), cudaMemcpyDeviceToHost);
         float max = -100000;
         unsigned int max_j = 0;
         for(unsigned int j = 0; j < 10; j++) {
