@@ -6,25 +6,21 @@
 #define NETWORK_H
 
 #include <random>
-#include <iostream>
+#include <thrust/device_vector.h>
 
 #include "assert.h"
 
-#define N_NODES       1024
-
 class Network {
 public:
-    template <int N, int M>
-    Network(float (&inputs)[N][M], unsigned char (&labels)[N]);
+    Network(float *inputs, unsigned char *labels);
     ~Network();
     void train();
-    void test();
+    float test(float *tests, unsigned char *labels);
 private:
     /* fns */
-    template <int N>
-    void
-    random_weights(float (&weights)[N]);
+    void run(unsigned int i);
     /* vars */
+    std::default_random_engine *eng;
     char *labels;
     float *inputs;
     float *weights1;
@@ -32,39 +28,7 @@ private:
     float *weights2;
     float *classes;
     float *softmax;
+    thrust::device_vector<float> temp;
 };
-
-template <int N, int M>
-Network::Network(float (&inputs)[N][M], unsigned char (&labels)[N]) {
-
-    float weights1[M*N_NODES];
-    float weights2[N_NODES*10];
-
-    random_weights(weights1);
-    random_weights(weights2);
-
-    cudaMalloc(&this->labels, N*sizeof(char));
-    cudaMalloc(&this->inputs, N*M*sizeof(float));
-    cudaMalloc(&this->weights1, M*N_NODES*sizeof(float));
-    cudaMalloc(&this->outputs, N_NODES*sizeof(float));
-    cudaMalloc(&this->weights2, N_NODES*10*sizeof(float));
-    cudaMalloc(&this->classes, 10*sizeof(float));
-    cudaMalloc(&this->softmax, 10*sizeof(float));
-
-    cudaMemcpy(this->labels, labels, 60000*sizeof(char), cudaMemcpyHostToDevice);
-    cudaMemcpy(this->inputs, inputs, 60000*28*28*sizeof(float), cudaMemcpyHostToDevice);
-    cudaMemcpy(this->weights1, weights1, 28*28*1024*sizeof(float), cudaMemcpyHostToDevice);
-    cudaMemcpy(this->weights2, weights2, 1024*10*sizeof(float), cudaMemcpyHostToDevice);
-}
-
-template <int N>
-void
-Network::random_weights(float (&weights)[N]) {
-    std::default_random_engine eng(std::random_device{}());
-    std::uniform_real_distribution<float> dist(-1.0, 1.0);
-    for(unsigned int i = 0; i < N; i++) {
-        weights[i] = dist(eng);
-    }
-}
 
 #endif
