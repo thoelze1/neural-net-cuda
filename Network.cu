@@ -9,50 +9,48 @@
 
 #include "Network.h"
 
-#define N_NODES       1024
-#define BATCH_SIZE     600
+#define BATCH_SIZE     100
 #define RATE         0.002
 #define DO_RATE        0.4
-#define IMG_SIZE     28*28
 
 Network::Network(float *inputs, unsigned char *labels) {
 
-    float input_w[IMG_SIZE*N_NODES];
-    float hidden_w[N_NODES*10];
+    float input_w[28*28*1024];
+    float hidden_w[1024*10];
 
     this->eng = new std::default_random_engine(std::random_device{}());
 
     std::normal_distribution<float> dist;
-    for(unsigned int i = 0; i < IMG_SIZE*N_NODES; i++) {
-        input_w[i] = dist(*(this->eng))/sqrt(IMG_SIZE);
+    for(unsigned int i = 0; i < 28*28*1024; i++) {
+        input_w[i] = dist(*(this->eng))/sqrt(28*28);
     }
-    for(unsigned int i = 0; i < N_NODES*10; i++) {
-        hidden_w[i] = dist(*(this->eng))/sqrt(N_NODES);
+    for(unsigned int i = 0; i < 1024*10; i++) {
+        hidden_w[i] = dist(*(this->eng))/sqrt(1024);
     }
 
     this->host_labels = labels;
-    cudaMalloc(&this->input_l, IMG_SIZE*60000*sizeof(float));
-    cudaMalloc(&this->input_w, IMG_SIZE*N_NODES*sizeof(float));
-    cudaMalloc(&this->input_w_grad, IMG_SIZE*N_NODES*sizeof(float));
-    cudaMalloc(&this->input_bias, N_NODES*sizeof(float));
-    cudaMalloc(&this->input_bias_grad, N_NODES*sizeof(float));
-    cudaMalloc(&this->hidden_l, N_NODES*sizeof(float));
-    cudaMalloc(&this->hidden_w, N_NODES*10*sizeof(float));
-    cudaMalloc(&this->hidden_w_grad, N_NODES*10*sizeof(float));
+    cudaMalloc(&this->input_l, 28*28*60000*sizeof(float));
+    cudaMalloc(&this->input_w, 28*28*1024*sizeof(float));
+    cudaMalloc(&this->input_w_grad, 28*28*1024*sizeof(float));
+    cudaMalloc(&this->input_bias, 1024*sizeof(float));
+    cudaMalloc(&this->input_bias_grad, 1024*sizeof(float));
+    cudaMalloc(&this->hidden_l, 1024*sizeof(float));
+    cudaMalloc(&this->hidden_w, 1024*10*sizeof(float));
+    cudaMalloc(&this->hidden_w_grad, 1024*10*sizeof(float));
     cudaMalloc(&this->hidden_bias, 10*sizeof(float));
     cudaMalloc(&this->hidden_bias_grad, 10*sizeof(float));
-    cudaMalloc(&this->dropouts, N_NODES*sizeof(float));
+    cudaMalloc(&this->dropouts, 1024*sizeof(float));
     cudaMalloc(&this->output_l, 10*sizeof(float));
     cudaMalloc(&this->softmax_l, 10*sizeof(float));
     cudaMalloc(&this->softmax_ds, 10*sizeof(float));
-    cudaMalloc(&this->hidden_ds, N_NODES*sizeof(float));
+    cudaMalloc(&this->hidden_ds, 1024*sizeof(float));
 
-    cudaMemset(this->input_bias, 0, N_NODES*sizeof(float));
+    cudaMemset(this->input_bias, 0, 1024*sizeof(float));
     cudaMemset(this->hidden_bias, 0, 10*sizeof(float));
 
-    cudaMemcpy(this->input_l, inputs, 60000*IMG_SIZE*sizeof(float), cudaMemcpyHostToDevice);
-    cudaMemcpy(this->input_w, input_w, IMG_SIZE*N_NODES*sizeof(float), cudaMemcpyHostToDevice);
-    cudaMemcpy(this->hidden_w, hidden_w, N_NODES*10*sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemcpy(this->input_l, inputs, 60000*28*28*sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemcpy(this->input_w, input_w, 28*28*1024*sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemcpy(this->hidden_w, hidden_w, 1024*10*sizeof(float), cudaMemcpyHostToDevice);
 }
 
 Network::~Network() {
@@ -93,14 +91,30 @@ softmax_forward(float *input, float *output, unsigned int n) {
 __global__ void
 softmax_back(float *softmax_l, float *softmax_ds, unsigned char label) {
 
+    float us[10];
+    for(unsigned i = 0; i < 10; i++) {
+        us[i] = 0;
+    }
+    us[(unsigned int)label] = -1/softmax_l[(unsigned int)label];
+    for (size_t j = 0; j < 10; j++) {
+        softmax_ds[j] = 0;
+        for (size_t i = 0; i < 10; i++) {
+            if (i == j) {
+                softmax_ds[j] += us[i]*(softmax_l[i]*(1 - softmax_l[j]));
+            } else {
+                softmax_ds[j] += us[i]*(-softmax_l[j]*softmax_l[i]);
+            }
+        }
+    }
+    /*
     unsigned int id = blockIdx.x*blockDim.x + threadIdx.x;
-
     float us = -1/softmax_l[(unsigned int)label];
     if (id == (unsigned int)label) {
         softmax_ds[id] = (softmax_l[(unsigned int)label]*(1 - softmax_l[id]))*us;
     } else {
         softmax_ds[id] = -1*softmax_l[id]*softmax_l[(unsigned int)label]*us;
     }
+    */
 }
 
 __global__ void
@@ -150,32 +164,31 @@ update_weights(float *weights, float *weights_grad) {
 void
 Network::train(unsigned int i) {
 
-    float dropouts[N_NODES];
-    std::uniform_real_distribution<float> dist;
-    for(unsigned int i = 0; i < N_NODES; i++) {
+    float dropouts[1024];
+    std::uniform_real_distribution<float> dist(0.0, 1.0);
+    for(unsigned int i = 0; i < 1024; i++) {
         if(dist(*this->eng) < DO_RATE) dropouts[i] = 0;
         else dropouts[i] = 1/DO_RATE;
     }
-    cudaMemcpy(this->dropouts, dropouts, N_NODES*sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemcpy(this->dropouts, dropouts, 1024*sizeof(float), cudaMemcpyHostToDevice);
 
-    cudaMemset(this->hidden_ds, 0, N_NODES*sizeof(float));
+    cudaMemset(this->hidden_ds, 0, 1024*sizeof(float));
 
-    hidden_forward<<<1, N_NODES>>>(this->input_l+i*IMG_SIZE, IMG_SIZE, this->input_w, this->hidden_l, N_NODES,
+    hidden_forward<<<1, 1024>>>(&this->input_l[i*28*28], 28*28, this->input_w, this->hidden_l, 1024,
                                 this->input_bias, true, 0);
-    hidden_forward<<<1, 10>>>(this->hidden_l, N_NODES, this->hidden_w, this->output_l, 10,
+    hidden_forward<<<1, 10>>>(this->hidden_l, 1024, this->hidden_w, this->output_l, 10,
                               this->hidden_bias, false, this->dropouts);
     softmax_forward<<<1, 1>>>(this->output_l, this->softmax_l, 10);
-    softmax_back<<<1, 10>>>(this->softmax_l, this->softmax_ds, this->host_labels[i]);
-    hidden_back<<<1, N_NODES>>>(this->hidden_l, N_NODES, this->output_l, 10,
+    softmax_back<<<1, 1>>>(this->softmax_l, this->softmax_ds, this->host_labels[i]);
+    hidden_back<<<1, 1024>>>(this->hidden_l, 1024, this->output_l, 10,
                              this->softmax_ds, this->hidden_ds, this->hidden_w, this->hidden_w_grad,
                              this->hidden_bias, this->hidden_bias_grad, false);
-    hidden_back<<<1, IMG_SIZE>>>(this->input_l+i*IMG_SIZE, IMG_SIZE, this->hidden_l, N_NODES,
+    hidden_back<<<1, 28*28>>>(&this->input_l[i*28*28], 28*28, this->hidden_l, 1024,
                               this->hidden_ds, 0, this->input_w, this->input_w_grad,
                               this->input_bias, this->input_bias_grad, true);
 
     float mem[10];
-    std::cout << (unsigned int)this->host_labels[i] << std::endl;
-    cudaMemcpy(mem, this->softmax_l, 10*sizeof(float), cudaMemcpyDeviceToHost);
+    cudaMemcpy(mem, this->input_w_grad, 10*sizeof(float), cudaMemcpyDeviceToHost);
     for(unsigned int j = 0; j < 10; j++) {
         std::cout << mem[j] << " ";
     }
@@ -191,16 +204,16 @@ Network::train() {
     std::shuffle(std::begin(indices), std::end(indices), *(this->eng));
     for(unsigned int i = 0; i < (60000/BATCH_SIZE); i++) {
         std::cout << "Batch " << i << std::endl;
-        cudaMemset(this->input_w_grad, 0, IMG_SIZE*N_NODES*sizeof(float));
-        cudaMemset(this->input_bias_grad, 0, N_NODES*sizeof(float));
-        cudaMemset(this->hidden_w_grad, 0, N_NODES*10*sizeof(float));
+        cudaMemset(this->input_w_grad, 0, 28*28*1024*sizeof(float));
+        cudaMemset(this->input_bias_grad, 0, 1024*sizeof(float));
+        cudaMemset(this->hidden_w_grad, 0, 1024*10*sizeof(float));
         cudaMemset(this->hidden_bias_grad, 0, 10*sizeof(float));
         for(unsigned int j = 0; j < BATCH_SIZE; j++) {
             train(indices[i*BATCH_SIZE+j]);
         }
-        update_weights<<<IMG_SIZE, N_NODES>>>(this->input_w, this->input_w_grad);
-        update_weights<<<N_NODES, 10>>>(this->hidden_w, this->hidden_w_grad);
-        update_weights<<<1, N_NODES>>>(this->input_bias, this->input_bias_grad);
+        update_weights<<<28*28, 1024>>>(this->input_w, this->input_w_grad);
+        update_weights<<<1024, 10>>>(this->hidden_w, this->hidden_w_grad);
+        update_weights<<<1, 1024>>>(this->input_bias, this->input_bias_grad);
         update_weights<<<1, 10>>>(this->hidden_bias, this->hidden_bias_grad);
     }
 }
@@ -209,13 +222,13 @@ float
 Network::test(float *tests, unsigned char *labels) {
 
     float *d_tests;
-    cudaMalloc(&d_tests, IMG_SIZE*10000*sizeof(float));
-    cudaMemcpy(d_tests, tests, IMG_SIZE*10000*sizeof(float), cudaMemcpyHostToDevice);
+    cudaMalloc(&d_tests, 28*28*10000*sizeof(float));
+    cudaMemcpy(d_tests, tests, 28*28*10000*sizeof(float), cudaMemcpyHostToDevice);
 
     unsigned int acc = 0;
     for(unsigned int i = 0; i < 1000; i++) {
-        hidden_forward<<<1, N_NODES>>>(d_tests + i*IMG_SIZE, IMG_SIZE, this->input_w, this->hidden_l, N_NODES, this->input_bias, true, 0);
-        hidden_forward<<<1, 10>>>(this->hidden_l, N_NODES, this->hidden_w, this->output_l, 10, this->hidden_bias, false, 0);
+        hidden_forward<<<1, 1024>>>(d_tests + i*28*28, 28*28, this->input_w, this->hidden_l, 1024, this->input_bias, true, 0);
+        hidden_forward<<<1, 10>>>(this->hidden_l, 1024, this->hidden_w, this->output_l, 10, this->hidden_bias, false, 0);
         float mem[10];
         cudaMemcpy(mem, this->output_l, 10*sizeof(float), cudaMemcpyDeviceToHost);
         float max = mem[0];
