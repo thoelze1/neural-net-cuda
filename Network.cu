@@ -11,7 +11,7 @@
 
 #define BATCH_SIZE     100
 #define RATE         0.002
-#define DO_RATE        0.4
+#define DO_RATE        0.3
 
 Network::Network(float *inputs, unsigned char *labels) {
 
@@ -47,7 +47,7 @@ Network::Network(float *inputs, unsigned char *labels) {
 
     cudaMemset(this->input_bias, 0, 1024*sizeof(float));
     cudaMemset(this->hidden_bias, 0, 10*sizeof(float));
-
+ 
     cudaMemcpy(this->input_l, inputs, 60000*28*28*sizeof(float), cudaMemcpyHostToDevice);
     cudaMemcpy(this->input_w, input_w, 28*28*1024*sizeof(float), cudaMemcpyHostToDevice);
     cudaMemcpy(this->hidden_w, hidden_w, 1024*10*sizeof(float), cudaMemcpyHostToDevice);
@@ -138,19 +138,31 @@ hidden_forward(float *input, unsigned int input_size, float *weights, float *out
 __global__ void
 hidden_back(float *input, unsigned int input_size, float *output, unsigned int output_size,
             float *us, float *ds, float *weights, float *weights_grad, float *bias, float *bias_grad,
-            bool relu) {
+            bool relu, float *dropout) {
 
     unsigned int id = blockIdx.x*blockDim.x + threadIdx.x;
 
     for(unsigned int i = 0; i < output_size; i++) {
         if(!relu || output[i] > 0) {
             if(ds) {
-                ds[id] += us[i]*weights[id*output_size+i];
+                if(dropout) {
+                    ds[id] += dropout[id]*us[i]*weights[id*output_size+i];
+                } else {
+                    ds[id] += us[i]*weights[id*output_size+i];
+                }
             }
-            weights_grad[id*output_size+i] += (us[i]*input[id]/BATCH_SIZE);
+            if(dropout) {
+                weights_grad[id*output_size+i] += (dropout[id]*us[i]*input[id]/BATCH_SIZE);
+            } else {
+                weights_grad[id*output_size+i] += (us[i]*input[id]/BATCH_SIZE);
+            }
         }
         if(id == 0) {
-            bias_grad[i] += us[i]/BATCH_SIZE;
+            if(dropout) {
+                bias_grad[i] += dropout[id]*us[i]/BATCH_SIZE;
+            } else {
+                bias_grad[i] += us[i]/BATCH_SIZE;
+            }
         }
     }
 }
@@ -159,6 +171,7 @@ __global__ void
 update_weights(float *weights, float *weights_grad) {
     unsigned int id = blockIdx.x*blockDim.x + threadIdx.x;
     weights[id] -= weights_grad[id]*RATE;
+    weights_grad[id] = 0;
 }
 
 void
@@ -176,23 +189,40 @@ Network::train(unsigned int i) {
 
     hidden_forward<<<1, 1024>>>(&this->input_l[i*28*28], 28*28, this->input_w, this->hidden_l, 1024,
                                 this->input_bias, true, 0);
+    /*
+    float weights[28*28], bias, input[28*28], output;
+    cudaMemcpy(weights, this->input_w, 28*28*sizeof(float), cudaMemcpyDeviceToHost);
+    cudaMemcpy(&bias, this->input_bias, sizeof(float), cudaMemcpyDeviceToHost);
+    cudaMemcpy(input, &this->input_l[i*28*28], 28*28*sizeof(float), cudaMemcpyDeviceToHost);
+    cudaMemcpy(&output, this->hidden_l, sizeof(float), cudaMemcpyDeviceToHost);
+    float correct = 0;
+    for(unsigned int j = 0; j < 28*28; j++) {
+        correct += weights[j]*input[j];
+    }
+    correct += bias;
+    std::cout << correct << " " << output << std::endl;
+    */
+
     hidden_forward<<<1, 10>>>(this->hidden_l, 1024, this->hidden_w, this->output_l, 10,
                               this->hidden_bias, false, this->dropouts);
-    softmax_forward<<<1, 1>>>(this->output_l, this->softmax_l, 10);
-    softmax_back<<<1, 1>>>(this->softmax_l, this->softmax_ds, this->host_labels[i]);
-    hidden_back<<<1, 1024>>>(this->hidden_l, 1024, this->output_l, 10,
-                             this->softmax_ds, this->hidden_ds, this->hidden_w, this->hidden_w_grad,
-                             this->hidden_bias, this->hidden_bias_grad, false);
-    hidden_back<<<1, 28*28>>>(&this->input_l[i*28*28], 28*28, this->hidden_l, 1024,
-                              this->hidden_ds, 0, this->input_w, this->input_w_grad,
-                              this->input_bias, this->input_bias_grad, true);
 
+    softmax_forward<<<1, 1>>>(this->output_l, this->softmax_l, 10);
     float mem[10];
-    cudaMemcpy(mem, this->input_w_grad, 10*sizeof(float), cudaMemcpyDeviceToHost);
+    cudaMemcpy(mem, this->softmax_l, 10*sizeof(float), cudaMemcpyDeviceToHost);
+    std::cout << (unsigned int)this->host_labels[i] << std::endl;
     for(unsigned int j = 0; j < 10; j++) {
         std::cout << mem[j] << " ";
     }
     std::cout << std::endl;
+
+    softmax_back<<<1, 1>>>(this->softmax_l, this->softmax_ds, this->host_labels[i]);
+
+    hidden_back<<<1, 1024>>>(this->hidden_l, 1024, this->output_l, 10,
+                             this->softmax_ds, this->hidden_ds, this->hidden_w, this->hidden_w_grad,
+                             this->hidden_bias, this->hidden_bias_grad, false, dropouts);
+    hidden_back<<<1, 28*28>>>(&this->input_l[i*28*28], 28*28, this->hidden_l, 1024,
+                              this->hidden_ds, 0, this->input_w, this->input_w_grad,
+                              this->input_bias, this->input_bias_grad, true, 0);
 }
 
 void
@@ -204,10 +234,6 @@ Network::train() {
     std::shuffle(std::begin(indices), std::end(indices), *(this->eng));
     for(unsigned int i = 0; i < (60000/BATCH_SIZE); i++) {
         std::cout << "Batch " << i << std::endl;
-        cudaMemset(this->input_w_grad, 0, 28*28*1024*sizeof(float));
-        cudaMemset(this->input_bias_grad, 0, 1024*sizeof(float));
-        cudaMemset(this->hidden_w_grad, 0, 1024*10*sizeof(float));
-        cudaMemset(this->hidden_bias_grad, 0, 10*sizeof(float));
         for(unsigned int j = 0; j < BATCH_SIZE; j++) {
             train(indices[i*BATCH_SIZE+j]);
         }
@@ -226,7 +252,7 @@ Network::test(float *tests, unsigned char *labels) {
     cudaMemcpy(d_tests, tests, 28*28*10000*sizeof(float), cudaMemcpyHostToDevice);
 
     unsigned int acc = 0;
-    for(unsigned int i = 0; i < 1000; i++) {
+    for(unsigned int i = 0; i < 10000; i++) {
         hidden_forward<<<1, 1024>>>(d_tests + i*28*28, 28*28, this->input_w, this->hidden_l, 1024, this->input_bias, true, 0);
         hidden_forward<<<1, 10>>>(this->hidden_l, 1024, this->hidden_w, this->output_l, 10, this->hidden_bias, false, 0);
         float mem[10];
@@ -241,5 +267,5 @@ Network::test(float *tests, unsigned char *labels) {
         }
         if(((unsigned int)labels[i]) == max_j) acc += 1;
     }
-    return (float)acc/1000;
+    return (float)acc/10000;
 }
