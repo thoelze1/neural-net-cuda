@@ -18,7 +18,6 @@ public:
     float test(float *tests, unsigned char *labels);
 private:
     /* fns */
-    void update();
     void run(unsigned int i);
     /* vars */
     std::default_random_engine *eng;

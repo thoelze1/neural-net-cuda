@@ -6,12 +6,13 @@
 #include <iostream>
 #include <algorithm>
 #include <vector>
+#include <limits>
 
 #include "Network.h"
 
 #define N_NODES       1024
 #define BATCH_SIZE     100
-#define RATE         0.002
+#define RATE           0.1
 
 Network::Network(float *inputs, unsigned char *labels) {
 
@@ -20,7 +21,7 @@ Network::Network(float *inputs, unsigned char *labels) {
 
     this->eng = new std::default_random_engine(std::random_device{}());
 
-    std::uniform_real_distribution<float> dist(-1.0, 1.0);
+    std::uniform_real_distribution<float> dist(0, 1.0);
     for(unsigned int i = 0; i < 28*28*N_NODES; i++) {
         input_w[i] = dist(*(this->eng));
     }
@@ -52,19 +53,23 @@ Network::~Network() {
     cudaFree(this->hidden_w);
     cudaFree(this->output_l);
     cudaFree(this->softmax_l);
+    cudaFree(this->softmax_ds);
+    cudaFree(this->hidden_ds);
+    cudaFree(this->input_w_grad);
+    cudaFree(this->hidden_w_grad);
     delete this->eng;
 }
 
 __global__ void
 softmax_forward(float *input, float *output, unsigned int n) {
     unsigned int i;
-    float max = 0;
+    float max = -1000000000;
     for(i = 0; i < n; i++) {
         if(input[i] > max) max = input[i];
     }
     float sum = 0;
     for(i = 0; i < n; i++) {
-        output[i] = exp(input[i] - max);
+        output[i] = expf(input[i] - max);
         sum += output[i];
     }
     for(i = 0; i < n; i++) {
@@ -73,15 +78,15 @@ softmax_forward(float *input, float *output, unsigned int n) {
 }
 
 __global__ void
-softmax_back(float *sm_out, unsigned char label, float *sm_ds) {
+softmax_back(float *softmax_l, float *softmax_ds, unsigned char label) {
 
     unsigned int id = blockIdx.x*blockDim.x + threadIdx.x;
 
-    float us = -1/sm_out[label];
+    float us = -1/softmax_l[label];
     if (id == (unsigned int)label) {
-        sm_ds[id] = (sm_out[label]*(1 - sm_out[id]))*us;
+        softmax_ds[id] = (softmax_l[label]*(1 - softmax_l[id]))*us;
     } else {
-        sm_ds[id] = (-1*sm_out[id]*sm_out[label])*us;
+        softmax_ds[id] = (-1*softmax_l[id]*softmax_l[label])*us;
     }
 }
 
@@ -113,6 +118,12 @@ hidden_back(float *input, unsigned int input_size, float *output, unsigned int o
     }
 }
 
+__global__ void
+update_weights(float *weights, float *weights_grad) {
+    unsigned int id = blockIdx.x*blockDim.x + threadIdx.x;
+    weights[id] -= weights_grad[id]*RATE;
+}
+
 void
 Network::run(unsigned int i) {
 
@@ -128,7 +139,7 @@ Network::run(unsigned int i) {
     gpu_assert(cudaPeekAtLastError());
     gpu_assert(cudaDeviceSynchronize());
 
-    softmax_back<<<1, 10>>>(this->softmax_l, this->host_labels[i], this->softmax_ds);
+    softmax_back<<<1, 10>>>(this->softmax_l, this->softmax_ds, this->host_labels[i]);
     gpu_assert(cudaPeekAtLastError());
     gpu_assert(cudaDeviceSynchronize());
 
@@ -145,28 +156,22 @@ Network::run(unsigned int i) {
 }
 
 void
-Network::update() {
-
-}
-
-void
 Network::train() {
     std::vector<unsigned int> indices(60000);
     for(unsigned int i = 0; i < 60000; i++) {
         indices[i] = i;
     }
     std::shuffle(std::begin(indices), std::end(indices), *(this->eng));
-    /*
     for(unsigned int i = 0; i < (60000/BATCH_SIZE); i++) {
-        cudaMemset(this->input_w_grad, 0, 28*28*1024*sizeof(float))
-        cudaMemset(this->hidden_w_grad, 0, 28*28*1024*sizeof(float))
+        std::cout << "Batch " << i << std::endl;
+        cudaMemset(this->input_w_grad, 0, 28*28*1024*sizeof(float));
+        cudaMemset(this->hidden_w_grad, 0, 1024*10*sizeof(float));
         for(unsigned int j = 0; j < BATCH_SIZE; j++) {
             run(indices[i*BATCH_SIZE+j]);
         }
-        update();
+        update_weights<<<28*28, 1024>>>(this->input_w, this->input_w_grad);
+        update_weights<<<1024, 10>>>(this->hidden_w, this->hidden_w_grad);
     }
-    */
-    run(0);
 }
 
 float
@@ -177,8 +182,7 @@ Network::test(float *tests, unsigned char *labels) {
     cudaMemcpy(d_tests, tests, 28*28*10000*sizeof(float), cudaMemcpyHostToDevice);
 
     unsigned int acc = 0;
-    //@TODO change back to 10000
-    for(unsigned int i = 0; i < 1000; i++) {
+    for(unsigned int i = 0; i < 10000; i++) {
         hidden_forward<<<1, 1024>>>(d_tests + i*28*28, 28*28, this->input_w, this->hidden_l, 1024, true);
         gpu_assert(cudaPeekAtLastError());
         gpu_assert(cudaDeviceSynchronize());
@@ -187,7 +191,7 @@ Network::test(float *tests, unsigned char *labels) {
         gpu_assert(cudaDeviceSynchronize());
         float mem[10];
         cudaMemcpy(mem, this->output_l, 10*sizeof(float), cudaMemcpyDeviceToHost);
-        float max = -100000;
+        float max = std::numeric_limits<float>::min();
         unsigned int max_j = 0;
         for(unsigned int j = 0; j < 10; j++) {
             if(mem[i] > max) {
@@ -197,6 +201,6 @@ Network::test(float *tests, unsigned char *labels) {
         }
         if(((int)labels[i]) == max_j) acc += 1;
     }
-    return (float)acc/1000;
+    return (float)acc/10000;
 }
 

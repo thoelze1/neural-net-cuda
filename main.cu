@@ -20,6 +20,8 @@ int main(int argc, char **argv) {
     read_mnist_labels("mnist/t10k-labels-idx1-ubyte", test_labels, 10000);
 
     Network net(images, labels);
+
+    std::cout << net.test(test_images, test_labels) << std::endl;
     for(unsigned int e = 0; e < N_EPOCHS; e++) {
         net.train();
         std::cout << net.test(test_images, test_labels) << std::endl;
