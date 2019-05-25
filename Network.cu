@@ -10,8 +10,8 @@
 #include "Network.h"
 
 #define BATCH_SIZE     100
-#define RATE         0.02
-#define DO_RATE        0.3
+#define RATE         0.002
+#define DO_RATE        0.4
 
 Network::Network(float *inputs, unsigned char *labels) {
 
@@ -124,74 +124,31 @@ hidden_back(float *input, unsigned int input_size, float *output, unsigned int o
             float *us, float *ds, float *weights, float *weights_grad, float *bias, float *bias_grad,
             bool relu, float *dropout) {
 
-    /*
     unsigned int id = blockIdx.x*blockDim.x + threadIdx.x;
 
-    for(unsigned int i = 0; i < output_size; i++) {
-        if(!relu || output[i] > 0) {
-            if(ds) {
-                if(dropout) {
-                    ds[id] += dropout[id]*us[i]*weights[id*output_size+i];
-                } else {
-                    ds[id] += us[i]*weights[id*output_size+i];
+    if (!relu || output[id] > 0) {
+        for (size_t j = 0; j < output_size; j++) {
+            if(dropout) {
+                if(ds) {
+                ds[id] += dropout[j]*us[j]*weights[j*input_size+id];
                 }
-            }
-            if(dropout) {
-                weights_grad[id*output_size+i] += (dropout[id]*us[i]*input[id]/BATCH_SIZE);
+                weights_grad[j*input_size+id] += dropout[j]*us[j]*input[id]/BATCH_SIZE;
             } else {
-                weights_grad[id*output_size+i] += (us[i]*input[id]/BATCH_SIZE);
-            }
-        }
-        if(id == 0) {
-            if(dropout) {
-                bias_grad[i] += dropout[id]*us[i]/BATCH_SIZE;
-            } else {
-                bias_grad[i] += us[i]/BATCH_SIZE;
-            }
-        }
-    }
-    */
-
-    for (size_t i = 0; i < output_size; i++) {
-        if (!relu || output[i] > 0) {
-            for (size_t j = 0; j < input_size; j++) {
-                if(dropout) {
-                    if(ds) {
-                    ds[j] += dropout[i]*us[i]*weights[i*input_size+j];
-                    }
-                    weights_grad[i*input_size+j] += dropout[i]*us[i]*input[j]/BATCH_SIZE;
-                } else {
-                    if(ds) {
-                    ds[j] += us[i]*weights[i*input_size+j];
-                    }
-                    weights_grad[i*input_size+j] += us[i]*input[j]/BATCH_SIZE;
+                if(ds) {
+                ds[id] += us[j]*weights[j*input_size+id];
                 }
+                weights_grad[j*input_size+id] += us[j]*input[id]/BATCH_SIZE;
             }
-            if(dropout) {
-                bias_grad[i] += dropout[i]*us[i]/BATCH_SIZE;
-            } else {
-                bias_grad[i] += us[i]/BATCH_SIZE;
+            if(id == 0) {
+                if(dropout) {
+                    bias_grad[j] += dropout[j]*us[j]/BATCH_SIZE;
+                } else {
+                    bias_grad[j] += us[j]/BATCH_SIZE;
+                }
             }
         }
     }
 
-/* 
-for (size_t i = 0; i < N_NEURONS; i++) {
-        if (m_current_kept(i) > 0) {
-            if (!m_relu || this->output(0, 0, i) > 0) {
-                for (size_t in_h = 0; in_h < IN_D; in_h++) {
-                    for (size_t in_i = 0; in_i < IN_H; in_i++) {
-                        for (size_t in_j = 0; in_j < IN_W; in_j++) {
-                            this->downstream_deriv[in_h][in_i][in_j] += m_current_kept(i)*upstream_deriv[i]*m_weight[i][in_h][in_i][in_j];
-                            m_weight_deriv[i][in_h][in_i][in_j] += (m_current_kept(i)*upstream_deriv[i]*input[in_h][in_i][in_j])/mb_size;
-                        }
-                    }
-                }
-                m_bias_deriv(i) += (m_current_kept(i)*upstream_deriv[i])/mb_size;
-            }
-        }
-    }
-*/
 }
 
 __global__ void
@@ -220,19 +177,6 @@ Network::train(unsigned int i) {
     hidden_forward<<<1, 1024>>>(&(this->input_l[i*28*28]), 28*28, this->input_w, this->hidden_l, 1024,
                                 this->input_bias, true, 0);
         gpu_assert(cudaDeviceSynchronize());
-    /*
-    float weights[28*28], bias, input[28*28], output;
-    cudaMemcpy(weights, this->input_w, 28*28*sizeof(float), cudaMemcpyDeviceToHost);
-    cudaMemcpy(&bias, this->input_bias, sizeof(float), cudaMemcpyDeviceToHost);
-    cudaMemcpy(input, &this->input_l[i*28*28], 28*28*sizeof(float), cudaMemcpyDeviceToHost);
-    cudaMemcpy(&output, this->hidden_l, sizeof(float), cudaMemcpyDeviceToHost);
-    float correct = 0;
-    for(unsigned int j = 0; j < 28*28; j++) {
-        correct += weights[j]*input[j];
-    }
-    correct += bias;
-    std::cout << correct << " " << output << std::endl;
-    */
 
     hidden_forward<<<1, 10>>>(this->hidden_l, 1024, this->hidden_w, this->output_l, 10,
                               this->hidden_bias, false, this->dropouts);
@@ -240,6 +184,7 @@ Network::train(unsigned int i) {
 
     softmax_forward<<<1, 10>>>(this->output_l, this->softmax_l, 10);
         gpu_assert(cudaDeviceSynchronize());
+    /*
     float mem[10];
     cudaMemcpy(mem, this->softmax_l, 10*sizeof(float), cudaMemcpyDeviceToHost);
     std::cout << (unsigned int)this->host_labels[i] << std::endl;
@@ -247,15 +192,16 @@ Network::train(unsigned int i) {
         std::cout << mem[j] << " ";
     }
     std::cout << std::endl;
+    */
 
     softmax_back<<<1, 1>>>(this->softmax_l, this->softmax_ds, this->host_labels[i]);
         gpu_assert(cudaDeviceSynchronize());
 
-    hidden_back<<<1, 1>>>(this->hidden_l, 1024, this->output_l, 10,
+    hidden_back<<<1, 1024>>>(this->hidden_l, 1024, this->output_l, 10,
                              this->softmax_ds, this->hidden_ds, this->hidden_w, this->hidden_w_grad,
                              this->hidden_bias, this->hidden_bias_grad, false, 0);
         gpu_assert(cudaDeviceSynchronize());
-    hidden_back<<<1, 1>>>(&(this->input_l[i*28*28]), 28*28, this->hidden_l, 1024,
+    hidden_back<<<1, 28*28>>>(&(this->input_l[i*28*28]), 28*28, this->hidden_l, 1024,
                               this->hidden_ds, 0, this->input_w, this->input_w_grad,
                               this->input_bias, this->input_bias_grad, true, this->dropouts);
         gpu_assert(cudaDeviceSynchronize());
@@ -293,7 +239,7 @@ Network::test(float *tests, unsigned char *labels) {
 
     unsigned int acc = 0;
     for(unsigned int i = 0; i < 10000; i++) {
-        hidden_forward<<<1, 1024>>>(d_tests + i*28*28, 28*28, this->input_w, this->hidden_l, 1024, this->input_bias, true, 0);
+        hidden_forward<<<1, 1024>>>(&(d_tests[i*28*28]), 28*28, this->input_w, this->hidden_l, 1024, this->input_bias, true, 0);
         gpu_assert(cudaDeviceSynchronize());
         hidden_forward<<<1, 10>>>(this->hidden_l, 1024, this->hidden_w, this->output_l, 10, this->hidden_bias, false, 0);
         gpu_assert(cudaDeviceSynchronize());
